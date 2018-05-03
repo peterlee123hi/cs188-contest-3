@@ -39,8 +39,7 @@ class Team:
     while len(leftCapsules) < (capsuleLimit / 2):
       if gameState.isValidPosition((mid_left, y), self.isRed):
         leftCapsules.append(ScareCapsule(mid_left, y))
-      else:
-        y += 1
+      y += 1
 
     y = height - 1
     mid_right = width / 2
@@ -48,8 +47,7 @@ class Team:
     while len(rightCapsules) < (capsuleLimit / 2):
       if gameState.isValidPosition((mid_right, y), self.isRed):
         rightCapsules.append(ScareCapsule(mid_right, y))
-      else:
-        y += 1
+      y -= 1
 
     return leftCapsules + rightCapsules
 
@@ -61,10 +59,8 @@ class ReflexCaptureAgent(CaptureAgent):
   """
   A base class for reflex agents that chooses score-maximizing actions
   """
-
   def registerInitialState(self, gameState):
     self.start = gameState.getAgentPosition(self.index)
-    self.teammate_index = [i for i in self.getTeam(gameState) if i != self.index][0]
     CaptureAgent.registerInitialState(self, gameState)
 
   def chooseAction(self, gameState):
@@ -72,7 +68,11 @@ class ReflexCaptureAgent(CaptureAgent):
     Picks among the actions with the highest Q(s,a).
     """
     actions = gameState.getLegalActions(self.index)
-    values = [self.evaluate(gameState, a) for a in actions]
+    actions = [a for a in actions if a != 'Stop']
+    values = []
+    for a in actions:
+      value = self.evaluate(gameState, a)
+      values.append(value)
 
     maxValue = max(values)
     bestActions = [a for a, v in zip(actions, values) if v == maxValue]
@@ -88,6 +88,7 @@ class ReflexCaptureAgent(CaptureAgent):
         if dist < bestDist:
           bestAction = action
           bestDist = dist
+
       return bestAction
 
     return random.choice(bestActions)
@@ -140,16 +141,24 @@ class SpeedyOffensiveAgent(ReflexCaptureAgent):
         power_idx += 1
       if power_idx >= len(power_priority):
         break
-    print 'Powers chosen:'
-    print powers
     return powers
+
+  def evaluate(self, gameState, action):
+    features = self.getFeatures(gameState, action)
+    weights = self.getWeights(gameState, action, features)
+    value = features * weights
+    if self.action_selected == 'go':
+      value -= 1000000
+    return value
 
   def getFeatures(self, gameState, action):
     features = util.Counter()
     successor = self.getSuccessor(gameState, action)
 
+    teammate_index = [i for i in self.getTeam(gameState) if i != self.index][0]
+
     myState = successor.getAgentState(self.index)
-    teammateState = successor.getAgentState(self.teammate_index)
+    teammateState = successor.getAgentState(teammate_index)
     enemies = []
     for enemyIndex in self.getOpponents(successor):
       enemyState = successor.getAgentState(enemyIndex)
@@ -178,7 +187,10 @@ class SpeedyOffensiveAgent(ReflexCaptureAgent):
       minDistance = min([self.getMazeDistance(myPos, food, successor) for food in foodList])
       features['distanceToFood'] = minDistance
 
-    features['distanceToTeammate'] = self.getMazeDistance(myPos, teammatePos, successor)
+    if teammatePos is not None:
+      features['distanceToTeammate'] = self.getMazeDistance(myPos, teammatePos, successor)
+    else:
+      features['distanceToTeammate'] = 0
 
     bestDist = -1
     closestEnemy = None
@@ -188,6 +200,7 @@ class SpeedyOffensiveAgent(ReflexCaptureAgent):
         bestDist = eDist
         closestEnemy = e
 
+    features['distanceToClosestOpponent'] = 9999
     if closestEnemy is not None:
         features['distanceToClosestOpponent'] = bestDist
         if closestEnemy in invaders:
@@ -201,20 +214,54 @@ class SpeedyOffensiveAgent(ReflexCaptureAgent):
     return features
 
   def getWeights(self, gameState, action, features):
-    run_away_from_enemy = {}
-    chase_opponent = {}
-    go_for_food = {}
-    return_to_home = {}
+    featuresList = ['isPacman', 'successorScore', 'opponentsScared', 'distanceToFood',
+                    'distanceToTeammate', 'distanceToClosestOpponent', 'isClosestOpponentAnInvader',
+                    'numCarrying', 'distanceToStart']
+    run_away_from_enemy = dict([(feature, 0) for feature in features])
+    run_away_from_enemy['distanceToClosestOpponent'] = 50
+    run_away_from_enemy['successorScore'] = 1000
+    if features['numCarrying'] > 0:
+      run_away_from_enemy['distanceToStart'] = -50
+    else:
+      run_away_from_enemy['distanceToFood'] = -50
+      run_away_from_enemy['numCarrying'] = 2000
+    run_away_from_enemy['distanceToTeammate'] = 10
 
-    if features['isPacman'] == 1 and \
+    chase_opponent = dict([(feature, 0) for feature in features])
+    chase_opponent['distanceToClosestOpponent'] = -50
+    chase_opponent['successorScore'] = 1000
+    chase_opponent['distanceToTeammate'] = 10
+
+    go_for_food = dict([(feature, 0) for feature in features])
+    go_for_food['distanceToFood'] = -100
+    go_for_food['successorScore'] = 1000000000
+    go_for_food['opponentsScared'] = 100
+    go_for_food['distanceToTeammate'] = 10
+    go_for_food['distanceToClosestOpponent'] = 20
+    go_for_food['numCarrying'] = 100000
+
+    return_to_home = dict([(feature, 0) for feature in features])
+    return_to_home['distanceToStart'] = -1000
+    return_to_home['successorScore'] = 1000000000
+    return_to_home['opponentsScared'] = 1000
+    return_to_home['distanceToTeammate'] = 100
+    return_to_home['distanceToClosestOpponent'] = 50
+    return_to_home['numCarrying'] = 1000000
+
+    if features['isPacman'] == 0 and \
        features['isClosestOpponentAnInvader'] == 1 and \
        features['distanceToClosestOpponent'] <= 8:
+      self.action_selected = 'chase'
       return chase_opponent
 
-    if features['distanceToClosestOpponent'] <= 4:
+    if features['distanceToClosestOpponent'] <= 3 and \
+       features['opponentsScared'] == 0:
+      self.action_selected = 'run'
       return run_away_from_enemy
 
     if features['numCarrying'] == 5:
+      self.action_selected = 'return'
       return return_to_home
 
+    self.action_selected = 'go'
     return go_for_food
