@@ -5,7 +5,7 @@ from os.path import isfile, join
 import subprocess
 from multiprocessing import Process
 
-SUBMISSIONS_DIR = './single_submissions/'
+SUBMISSIONS_DIR = './submissions/'
 NUM_TRIALS = 15
 
 def removeExtension(file_name):
@@ -26,8 +26,9 @@ def getOutput(file_a, file_b):
                             join(SUBMISSIONS_DIR, file_a),
                             '-b',
                             join(SUBMISSIONS_DIR, file_b),
-                            '-l',
-                            'RANDOM',
+                            '-l RANDOM',
+                            '-m 4',
+                            '--capsuleLimit 4',
                             '-q']))
     except:
         return 'invalid'
